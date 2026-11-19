@@ -1,29 +1,36 @@
 import UIKit
 
-/// A keyboard with no letter keys: type with your usual keyboard, switch here, tap Fix.
-/// Fixes the selected text if there is a selection, otherwise the text before the cursor.
-final class KeyboardViewController: UIInputViewController {
+/// A keyboard with no letter keys: type with your usual keyboard, switch here, tap Check.
+/// It lists each correction; skip any you don't want, then tap Fix all.
+/// Works on the selected text if there is a selection, otherwise the text before the cursor.
+final class KeyboardViewController: UIInputViewController, UITableViewDataSource, UITableViewDelegate {
     private struct Applied: Codable {
         let original: String
         let fixed: String
     }
 
-    /// The last fix, kept on disk so Undo still works after switching keyboards and back.
-    private static let appliedKey = "lastApplied"
-
-    private func remember(_ applied: Applied?) {
-        lastApplied = applied
-        undoButton.isEnabled = applied != nil
-        let data = applied.flatMap { try? JSONEncoder().encode($0) }
-        UserDefaults.standard.set(data, forKey: Self.appliedKey)
+    /// A correction waiting for the person to accept or skip its changes.
+    private struct Review {
+        let original: String
+        let usingSelection: Bool
+        let diff: TextDiff
+        var accepted: Set<Int>
     }
 
-    private let fixButton = UIButton(type: .system)
+    /// The last fix, kept on disk so Undo still works after switching keyboards and back.
+    private static let appliedKey = "lastApplied"
+    private static let idleHeight: CGFloat = 170
+    private static let reviewHeight: CGFloat = 330
+
+    private let mainButton = UIButton(type: .system)
     private let undoButton = UIButton(type: .system)
     private let globeButton = UIButton(type: .system)
     private let statusLabel = UILabel()
     private let spinner = UIActivityIndicatorView(style: .medium)
+    private let tableView = UITableView(frame: .zero, style: .plain)
+    private var heightConstraint: NSLayoutConstraint?
     private var lastApplied: Applied?
+    private var review: Review?
     private var task: Task<Void, Never>?
 
     override func viewDidLoad() {
@@ -32,9 +39,9 @@ final class KeyboardViewController: UIInputViewController {
         if let data = UserDefaults.standard.data(forKey: Self.appliedKey),
            let applied = try? JSONDecoder().decode(Applied.self, from: data) {
             lastApplied = applied
-            undoButton.isEnabled = true
         }
-        setStatus(hasFullAccess ? "Put the cursor at the end of your text, then tap Fix."
+        refreshButtons()
+        setStatus(hasFullAccess ? "Put the cursor at the end of your text, then tap Check."
                                 : "Turn on Allow Full Access for iOSAIBoard in Settings.")
     }
 
@@ -52,30 +59,12 @@ final class KeyboardViewController: UIInputViewController {
     // MARK: - UI
 
     private func buildUI() {
-        let height = view.heightAnchor.constraint(equalToConstant: 170)
+        let height = view.heightAnchor.constraint(equalToConstant: Self.idleHeight)
         height.priority = .defaultHigh
         height.isActive = true
+        heightConstraint = height
 
-        var fixConfig = UIButton.Configuration.filled()
-        fixConfig.title = "Fix"
-        fixConfig.image = UIImage(systemName: "checkmark.circle.fill")
-        fixConfig.imagePadding = 8
-        fixConfig.cornerStyle = .large
-        fixConfig.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attrs in
-            var attrs = attrs
-            attrs.font = .systemFont(ofSize: 22, weight: .semibold)
-            return attrs
-        }
-        fixButton.configuration = fixConfig
-        fixButton.addTarget(self, action: #selector(fixTapped), for: .touchUpInside)
-
-        var undoConfig = UIButton.Configuration.gray()
-        undoConfig.title = "Undo"
-        undoConfig.image = UIImage(systemName: "arrow.uturn.backward")
-        undoConfig.imagePadding = 6
-        undoConfig.cornerStyle = .large
-        undoButton.configuration = undoConfig
-        undoButton.isEnabled = false
+        mainButton.addTarget(self, action: #selector(mainTapped), for: .touchUpInside)
         undoButton.addTarget(self, action: #selector(undoTapped), for: .touchUpInside)
 
         var globeConfig = UIButton.Configuration.gray()
@@ -93,19 +82,32 @@ final class KeyboardViewController: UIInputViewController {
 
         spinner.hidesWhenStopped = true
 
-        let buttons = UIStackView(arrangedSubviews: [globeButton, undoButton, fixButton])
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "change")
+        tableView.backgroundColor = .clear
+        tableView.rowHeight = UITableView.automaticDimension
+        tableView.estimatedRowHeight = 44
+        tableView.isHidden = true
+        tableView.layer.cornerRadius = 10
+
+        let buttons = UIStackView(arrangedSubviews: [globeButton, undoButton, mainButton])
         buttons.axis = .horizontal
         buttons.spacing = 10
         buttons.distribution = .fill
         globeButton.widthAnchor.constraint(equalToConstant: 52).isActive = true
-        undoButton.widthAnchor.constraint(equalToConstant: 104).isActive = true
+        undoButton.widthAnchor.constraint(equalToConstant: 112).isActive = true
+        // Buttons are a normal height while the list is showing, and grow to fill when it is not.
+        let buttonHeight = buttons.heightAnchor.constraint(equalToConstant: 56)
+        buttonHeight.priority = .defaultHigh
+        buttonHeight.isActive = true
 
         let statusRow = UIStackView(arrangedSubviews: [spinner, statusLabel])
         statusRow.axis = .horizontal
         statusRow.spacing = 8
         statusRow.alignment = .center
 
-        let column = UIStackView(arrangedSubviews: [statusRow, buttons])
+        let column = UIStackView(arrangedSubviews: [statusRow, tableView, buttons])
         column.axis = .vertical
         column.spacing = 10
         column.translatesAutoresizingMaskIntoConstraints = false
@@ -125,13 +127,74 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func setBusy(_ busy: Bool) {
-        fixButton.isEnabled = !busy
+        mainButton.isEnabled = !busy
         if busy { spinner.startAnimating() } else { spinner.stopAnimating() }
     }
 
-    // MARK: - Fix
+    /// Sets both buttons' labels for the current state: idle, or reviewing changes.
+    private func refreshButtons() {
+        var main = UIButton.Configuration.filled()
+        main.cornerStyle = .large
+        main.imagePadding = 8
+        main.image = UIImage(systemName: "checkmark.circle.fill")
+        main.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attrs in
+            var attrs = attrs
+            attrs.font = .systemFont(ofSize: 20, weight: .semibold)
+            return attrs
+        }
+        var undo = UIButton.Configuration.gray()
+        undo.cornerStyle = .large
+        undo.imagePadding = 6
 
-    @objc private func fixTapped() {
+        if let review {
+            let total = review.diff.changes.count
+            let chosen = review.accepted.count
+            if chosen == total {
+                main.title = "Fix all \(total)"
+            } else if chosen == 0 {
+                main.title = "Fix none"
+                main.image = UIImage(systemName: "xmark.circle.fill")
+            } else {
+                main.title = "Fix \(chosen) of \(total)"
+            }
+            undo.title = "Cancel"
+            undoButton.isEnabled = true
+        } else {
+            main.title = "Check"
+            undo.title = "Undo"
+            undo.image = UIImage(systemName: "arrow.uturn.backward")
+            undoButton.isEnabled = lastApplied != nil
+        }
+        mainButton.configuration = main
+        undoButton.configuration = undo
+    }
+
+    private func showReview(_ newReview: Review?) {
+        review = newReview
+        tableView.isHidden = newReview == nil
+        heightConstraint?.constant = newReview == nil ? Self.idleHeight : Self.reviewHeight
+        tableView.reloadData()
+        refreshButtons()
+    }
+
+    private func remember(_ applied: Applied?) {
+        lastApplied = applied
+        let data = applied.flatMap { try? JSONEncoder().encode($0) }
+        UserDefaults.standard.set(data, forKey: Self.appliedKey)
+        refreshButtons()
+    }
+
+    // MARK: - Check
+
+    @objc private func mainTapped() {
+        if review != nil {
+            applyReview()
+        } else {
+            startCheck()
+        }
+    }
+
+    private func startCheck() {
         guard hasFullAccess else {
             setStatus("Turn on Allow Full Access for iOSAIBoard in Settings.")
             return
@@ -140,7 +203,7 @@ final class KeyboardViewController: UIInputViewController {
         let usingSelection = !selection.isEmpty
         let source = usingSelection ? selection : (textDocumentProxy.documentContextBeforeInput ?? "")
         guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            setStatus("Nothing to fix. Put the cursor at the end of your text, or select it.")
+            setStatus("Nothing to check. Put the cursor at the end of your text, or select it.")
             return
         }
 
@@ -150,7 +213,7 @@ final class KeyboardViewController: UIInputViewController {
             do {
                 let fixed = try await FixClient.fix(source)
                 guard let self, !Task.isCancelled else { return }
-                self.apply(original: source, fixed: fixed, usingSelection: usingSelection)
+                self.present(original: source, fixed: fixed, usingSelection: usingSelection)
             } catch {
                 guard let self, !Task.isCancelled else { return }
                 self.setStatus((error as? LocalizedError)?.errorDescription ?? "Could not reach the server.")
@@ -159,26 +222,42 @@ final class KeyboardViewController: UIInputViewController {
         }
     }
 
-    private func apply(original: String, fixed: String, usingSelection: Bool) {
-        let proxy = textDocumentProxy
-        // Only touch the text if it is still exactly what was sent.
-        let current = usingSelection ? (proxy.selectedText ?? "") : (proxy.documentContextBeforeInput ?? "")
-        guard current == original else {
-            setStatus("The text changed while checking. Tap Fix again.")
-            return
-        }
-        guard fixed != original else {
+    /// Shows the changes for review. Nothing in the text is touched yet.
+    private func present(original: String, fixed: String, usingSelection: Bool) {
+        let diff = TextDiff(original: original, fixed: fixed)
+        guard fixed != original, !diff.changes.isEmpty else {
             setStatus("Looks good. Nothing to fix.")
             switchBackSoon()
             return
         }
+        let count = diff.changes.count
+        setStatus(count == 1 ? "1 change. Tap it to skip it, or tap Fix all."
+                             : "\(count) changes. Tap any you want to skip, then Fix all.")
+        showReview(Review(original: original, usingSelection: usingSelection, diff: diff,
+                          accepted: Set(diff.changes.indices)))
+    }
 
-        if usingSelection {
-            proxy.insertText(fixed)
-        } else {
-            replaceTail(of: original, with: fixed)
+    private func applyReview() {
+        guard let review else { return }
+        showReview(nil)
+        guard !review.accepted.isEmpty else {
+            setStatus("Left as it was.")
+            return
         }
-        remember(Applied(original: original, fixed: fixed))
+        let proxy = textDocumentProxy
+        // Only touch the text if it is still exactly what was checked.
+        let current = review.usingSelection ? (proxy.selectedText ?? "") : (proxy.documentContextBeforeInput ?? "")
+        guard current == review.original else {
+            setStatus("The text changed since the check. Tap Check again.")
+            return
+        }
+        let result = review.diff.result(accepting: review.accepted)
+        if review.usingSelection {
+            proxy.insertText(result)
+        } else {
+            replaceTail(of: review.original, with: result)
+        }
+        remember(Applied(original: review.original, fixed: result))
         setStatus("Fixed. Come back here to undo.")
         switchBackSoon()
     }
@@ -191,6 +270,11 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     @objc private func undoTapped() {
+        if review != nil {
+            showReview(nil)
+            setStatus("Left as it was.")
+            return
+        }
         guard let applied = lastApplied else { return }
         // The fixed text must still sit right before the cursor.
         let before = textDocumentProxy.documentContextBeforeInput ?? ""
@@ -215,5 +299,71 @@ final class KeyboardViewController: UIInputViewController {
         if !tail.isEmpty {
             textDocumentProxy.insertText(tail)
         }
+    }
+
+    // MARK: - Change list
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        review?.diff.changes.count ?? 0
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "change", for: indexPath)
+        guard let review else { return cell }
+        let change = review.diff.changes[indexPath.row]
+        let accepted = review.accepted.contains(indexPath.row)
+
+        var content = cell.defaultContentConfiguration()
+        content.attributedText = Self.describe(change, accepted: accepted)
+        content.textProperties.numberOfLines = 2
+        cell.contentConfiguration = content
+        cell.accessoryType = accepted ? .checkmark : .none
+        cell.backgroundColor = .secondarySystemBackground
+        cell.selectionStyle = .none
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        guard var current = review else { return }
+        if current.accepted.contains(indexPath.row) {
+            current.accepted.remove(indexPath.row)
+        } else {
+            current.accepted.insert(indexPath.row)
+        }
+        review = current
+        tableView.reloadRows(at: [indexPath], with: .none)
+        refreshButtons()
+    }
+
+    /// "their → they're", with the old text struck through. Skipped changes are greyed out.
+    private static func describe(_ change: TextChange, accepted: Bool) -> NSAttributedString {
+        let old = change.old.trimmingCharacters(in: .whitespacesAndNewlines)
+        let new = change.new.trimmingCharacters(in: .whitespacesAndNewlines)
+        let font = UIFont.preferredFont(forTextStyle: .body)
+        let oldColor: UIColor = accepted ? .systemRed : .tertiaryLabel
+        let newColor: UIColor = accepted ? .systemGreen : .tertiaryLabel
+        let plainColor: UIColor = accepted ? .secondaryLabel : .tertiaryLabel
+        let text = NSMutableAttributedString()
+
+        func add(_ string: String, _ color: UIColor, struck: Bool = false) {
+            var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+            if struck { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+            text.append(NSAttributedString(string: string, attributes: attributes))
+        }
+
+        if old.isEmpty && new.isEmpty {
+            add("Fix spacing", plainColor)
+        } else if old.isEmpty {
+            add("Add ", plainColor)
+            add(new, newColor)
+        } else if new.isEmpty {
+            add("Remove ", plainColor)
+            add(old, oldColor, struck: true)
+        } else {
+            add(old, oldColor, struck: true)
+            add("  →  ", plainColor)
+            add(new, newColor)
+        }
+        return text
     }
 }
