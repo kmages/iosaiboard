@@ -27,6 +27,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.kmages.iosaiboard
     dependencies:
       - target: iOSAIBoardKeyboard
+    scheme: {}
   iOSAIBoardKeyboard:
     type: app-extension
     platform: iOS

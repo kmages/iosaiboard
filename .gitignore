@@ -5,3 +5,5 @@ __pycache__/
 ios/*/Info.plist
 .DS_Store
 proxy/data/
+ios/build/
+ios/install.log
