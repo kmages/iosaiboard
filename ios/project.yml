@@ -1,4 +1,4 @@
-name: FixKey
+name: iOSAIBoard
 options:
   bundleIdPrefix: com.kmages
   deploymentTarget:
@@ -12,29 +12,29 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     TARGETED_DEVICE_FAMILY: "1"
 targets:
-  FixKey:
+  iOSAIBoard:
     type: application
     platform: iOS
     sources: [App, Shared]
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: FixKey
+        CFBundleDisplayName: iOSAIBoard
         UILaunchScreen: {}
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.kmages.fixkey
+        PRODUCT_BUNDLE_IDENTIFIER: com.kmages.iosaiboard
     dependencies:
-      - target: FixKeyKeyboard
-  FixKeyKeyboard:
+      - target: iOSAIBoardKeyboard
+  iOSAIBoardKeyboard:
     type: app-extension
     platform: iOS
     sources: [Keyboard, Shared]
     info:
       path: Keyboard/Info.plist
       properties:
-        CFBundleDisplayName: FixKey
+        CFBundleDisplayName: iOSAIBoard
         NSExtension:
           NSExtensionPointIdentifier: com.apple.keyboard-service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
@@ -45,4 +45,4 @@ targets:
             RequestsOpenAccess: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.kmages.fixkey.keyboard
+        PRODUCT_BUNDLE_IDENTIFIER: com.kmages.iosaiboard.keyboard

@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct FixKeyApp: App {
+struct iOSAIBoardApp: App {
     var body: some Scene {
         WindowGroup {
             SetupView()
@@ -16,8 +16,8 @@ struct SetupView: View {
         NavigationStack {
             Form {
                 Section("Set up") {
-                    Label("Open Settings, then General, Keyboard, Keyboards, Add New Keyboard, FixKey.", systemImage: "1.circle")
-                    Label("Tap FixKey in that list and turn on Allow Full Access. It needs the network to check your text.", systemImage: "2.circle")
+                    Label("Open Settings, then General, Keyboard, Keyboards, Add New Keyboard, iOSAIBoard.", systemImage: "1.circle")
+                    Label("Tap iOSAIBoard in that list and turn on Allow Full Access. It needs the network to check your text.", systemImage: "2.circle")
                     Button("Open Settings") {
                         if let url = URL(string: UIApplication.openSettingsURLString) {
                             UIApplication.shared.open(url)
@@ -26,7 +26,7 @@ struct SetupView: View {
                 }
                 Section("How to use it") {
                     Label("Type with your usual keyboard.", systemImage: "keyboard")
-                    Label("Hold the globe key and pick FixKey.", systemImage: "globe")
+                    Label("Hold the globe key and pick iOSAIBoard.", systemImage: "globe")
                     Label("Tap Fix. It corrects the text before the cursor, or the selected text if you selected some.", systemImage: "checkmark.circle")
                 }
                 Section("Try it here") {
@@ -39,7 +39,7 @@ struct SetupView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("FixKey")
+            .navigationTitle("iOSAIBoard")
         }
     }
 }

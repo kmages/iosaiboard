@@ -20,7 +20,7 @@ final class KeyboardViewController: UIInputViewController {
         super.viewDidLoad()
         buildUI()
         setStatus(hasFullAccess ? "Put the cursor at the end of your text, then tap Fix."
-                                : "Turn on Allow Full Access for FixKey in Settings.")
+                                : "Turn on Allow Full Access for iOSAIBoard in Settings.")
     }
 
     override func viewWillLayoutSubviews() {
@@ -118,7 +118,7 @@ final class KeyboardViewController: UIInputViewController {
 
     @objc private func fixTapped() {
         guard hasFullAccess else {
-            setStatus("Turn on Allow Full Access for FixKey in Settings.")
+            setStatus("Turn on Allow Full Access for iOSAIBoard in Settings.")
             return
         }
         let selection = textDocumentProxy.selectedText ?? ""
