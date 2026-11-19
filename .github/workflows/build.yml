@@ -1,8 +1,7 @@
 name: Compile check
+# Manual only: GitHub's Mac runners are often unavailable, and each
+# cancelled run emails the repo owner.
 on:
-  push:
-    branches: [main]
-    paths: ["ios/**", ".github/workflows/build.yml"]
   workflow_dispatch:
 jobs:
   build:
