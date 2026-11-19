@@ -86,6 +86,11 @@ async def fix(body: FixRequest, authorization: str | None = Header(default=None)
         raise HTTPException(502, "Server is missing a working Claude key")
     except anthropic.RateLimitError:
         raise HTTPException(429, "Busy. Try again in a moment.")
+    except anthropic.BadRequestError as e:
+        log.error("anthropic 400: %s", e.message)
+        if "credit balance" in str(e.message):
+            raise HTTPException(502, "The Claude account is out of credit")
+        raise HTTPException(502, "Claude returned an error")
     except anthropic.APIStatusError as e:
         log.error("anthropic status %s: %s", e.status_code, e.message)
         raise HTTPException(502, "Claude returned an error")
