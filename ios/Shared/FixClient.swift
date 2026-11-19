@@ -64,6 +64,14 @@ enum FixClient {
         return try JSONDecoder().decode(SavedDictionary.self, from: data)
     }
 
+    /// Adds one word to My words, so Fix leaves it alone from now on.
+    static func addKeep(_ word: String) async throws {
+        var request = URLRequest(url: dictionaryURL.appendingPathComponent("keep"))
+        request.httpMethod = "POST"
+        request.httpBody = try JSONEncoder().encode(["word": word])
+        _ = try await send(request)
+    }
+
     /// Saves and returns the cleaned-up copy the server kept.
     static func saveDictionary(_ dictionary: SavedDictionary) async throws -> SavedDictionary {
         var request = URLRequest(url: dictionaryURL)

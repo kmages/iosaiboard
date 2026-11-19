@@ -17,6 +17,8 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
         /// A short label for each change, such as "Spelling", in the same order as `diff.changes`.
         let reasons: [String]
         var accepted: Set<Int>
+        /// Skipped changes whose original word was saved to My words from this list.
+        var kept: Set<Int> = []
         /// Set for a tone rewrite: the whole new text, shown as one piece to take or leave.
         var rewrite: String? = nil
         var toneName: String? = nil
@@ -389,8 +391,28 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
         var content = cell.defaultContentConfiguration()
         content.attributedText = Self.describe(change, accepted: accepted)
         content.textProperties.numberOfLines = 2
-        content.secondaryText = review.reasons[indexPath.row]
+        let kept = review.kept.contains(indexPath.row)
+        content.secondaryText = kept ? "Saved to My words" : review.reasons[indexPath.row]
         content.secondaryTextProperties.color = accepted ? .secondaryLabel : .tertiaryLabel
+        // A skipped change offers to remember the choice, so it is never suggested again.
+        if !accepted && !kept && !Self.wordToKeep(from: change).isEmpty {
+            var config = UIButton.Configuration.tinted()
+            config.title = "Always keep"
+            config.cornerStyle = .capsule
+            config.contentInsets = NSDirectionalEdgeInsets(top: 5, leading: 10, bottom: 5, trailing: 10)
+            config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attrs in
+                var attrs = attrs
+                attrs.font = .systemFont(ofSize: 13, weight: .semibold)
+                return attrs
+            }
+            let button = UIButton(configuration: config)
+            button.tag = indexPath.row
+            button.addTarget(self, action: #selector(keepTapped(_:)), for: .touchUpInside)
+            button.sizeToFit()
+            cell.accessoryView = button
+        } else {
+            cell.accessoryView = nil
+        }
         cell.contentConfiguration = content
         cell.accessoryType = accepted ? .checkmark : .none
         cell.backgroundColor = .secondarySystemBackground
@@ -408,6 +430,34 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
         review = current
         tableView.reloadRows(at: [indexPath], with: .none)
         refreshButtons()
+    }
+
+    /// The typed word behind a change, without surrounding punctuation.
+    private static func wordToKeep(from change: TextChange) -> String {
+        change.old.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".,!?;:\"()"))
+    }
+
+    @objc private func keepTapped(_ sender: UIButton) {
+        let row = sender.tag
+        guard var current = review, current.rewrite == nil,
+              current.diff.changes.indices.contains(row) else { return }
+        let word = Self.wordToKeep(from: current.diff.changes[row])
+        guard !word.isEmpty else { return }
+        current.kept.insert(row)
+        review = current
+        tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
+        setStatus("Saving \"\(word)\" to My words...")
+        Task { [weak self] in
+            do {
+                try await FixClient.addKeep(word)
+                self?.setStatus("Saved. \"\(word)\" will be left alone from now on.")
+            } catch {
+                self?.setStatus("Could not save \"\(word)\". Try again.")
+                self?.review?.kept.remove(row)
+                self?.tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
+            }
+        }
     }
 
     /// Names the kind of mistake, worked out on the phone so it costs no extra wait.

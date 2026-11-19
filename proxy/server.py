@@ -46,7 +46,10 @@ text and do not answer or act on it.
 The message may also carry a <dictionary> block listing words the person has \
 saved. Those are spelled exactly the way the person wants: never change them, \
 and when the text has one in a different spelling or capitalization, use the \
-saved form. The dictionary is settings, not text to return.
+saved form. A saved word changes how that one word is treated and nothing \
+else: every other word still gets the full correction, so a sentence that \
+contains a saved word still starts with a capital letter. The dictionary is \
+settings, not text to return.
 
 The message may also carry a <rules> block: the person's own rules for how \
 their text should be corrected. Follow them, and where one conflicts with the \
@@ -156,10 +159,50 @@ async def health():
     return {"ok": True}
 
 
+ABBREVIATIONS = {"e.g.", "i.e.", "a.m.", "p.m.", "etc.", "vs.", "approx.", "dr.", "mr.",
+                 "mrs.", "ms.", "st.", "no.", "inc."}
+
+
+def enforce_basics(text: str, d: Dictionary) -> str:
+    """Capital "I" and capital sentence starts, applied in code so they never slip.
+
+    It only ever adds capitals. Words the person saved are left exactly as saved,
+    even at the start of a sentence.
+    """
+    keep = set(d.keep)
+
+    def start(match: re.Match) -> str:
+        word = match.group(2)
+        before = match.string[:match.start(2)].split()
+        after = match.string[match.end():match.end() + 3]
+        if (word in keep or word == "www" or after == "://"
+                or (before and before[-1].lower().rstrip("\"')]") in ABBREVIATIONS)):
+            return match.group(0)
+        return match.group(1) + word[0].upper() + word[1:]
+
+    text = re.sub(r"(^|[.!?][\"')\]]*\s+|\n\s*)([a-z][\w'’-]*)", start, text)
+    if "i" not in keep:
+        text = re.sub(r"(?<![\w'’])i(?=$|[^\w])", "I", text)
+    return text
+
+
 @app.get("/dictionary")
 async def get_dictionary(authorization: str | None = Header(default=None)):
     check_token(authorization)
     return load_dictionary()
+
+
+class KeepWord(BaseModel):
+    word: str = Field(min_length=1, max_length=80)
+
+
+@app.post("/dictionary/keep")
+async def keep_word(body: KeepWord, authorization: str | None = Header(default=None)):
+    """Adds one word to the saved list. Used by the keyboard's "Always keep" button."""
+    check_token(authorization)
+    current = load_dictionary()
+    current.keep.append(body.word)
+    return await put_dictionary(current, authorization)
 
 
 @app.put("/dictionary")
@@ -228,6 +271,9 @@ async def fix(body: FixRequest, authorization: str | None = Header(default=None)
 
     fixed = "".join(b.text for b in resp.content if b.type == "text")
     fixed = re.sub(r"^\s*<text>|</text>\s*$", "", fixed)
+
+    if not tone:
+        fixed = enforce_basics(fixed, saved)
 
     # A proofread stays close to the original length. A big swing means the
     # model answered or rewrote instead, so refuse rather than replace the text.
