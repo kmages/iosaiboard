@@ -4,3 +4,4 @@ __pycache__/
 *.xcodeproj
 ios/*/Info.plist
 .DS_Store
+proxy/data/

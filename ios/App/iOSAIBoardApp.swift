@@ -29,6 +29,13 @@ struct SetupView: View {
                     Label("Hold the globe key and pick iOSAIBoard.", systemImage: "globe")
                     Label("Tap Fix. It corrects the text before the cursor, or the selected text if you selected some.", systemImage: "checkmark.circle")
                 }
+                Section("Make it yours") {
+                    NavigationLink {
+                        DictionaryView()
+                    } label: {
+                        Label("My words and corrections", systemImage: "character.book.closed")
+                    }
+                }
                 Section("Try it here") {
                     TextEditor(text: $sample)
                         .frame(minHeight: 140)
