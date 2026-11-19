@@ -15,6 +15,15 @@ struct SetupView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    NavigationLink {
+                        ComposeView()
+                    } label: {
+                        Label("Write a checked email", systemImage: "envelope.badge.shield.half.filled")
+                    }
+                } footer: {
+                    Text("Email written here can't be sent until it has been checked.")
+                }
                 Section("Set up") {
                     Label("Open Settings, then General, Keyboard, Keyboards, Add New Keyboard, iOSAIBoard.", systemImage: "1.circle")
                     Label("Tap iOSAIBoard in that list and turn on Allow Full Access. It needs the network to check your text.", systemImage: "2.circle")
