@@ -6,6 +6,7 @@ struct DictionaryView: View {
     @State private var newWord = ""
     @State private var newTyped = ""
     @State private var newWanted = ""
+    @State private var newRule = ""
     @State private var status = "Loading..."
     @State private var loaded = false
 
@@ -60,12 +61,30 @@ struct DictionaryView: View {
             }
 
             Section {
+                ForEach(saved.rules, id: \.self) { rule in
+                    Text(rule)
+                }
+                .onDelete { offsets in
+                    saved.rules.remove(atOffsets: offsets)
+                    save()
+                }
+                TextField("Add a rule in your own words", text: $newRule, axis: .vertical)
+                    .lineLimit(1...4)
+                Button("Add rule", action: addRule)
+                    .disabled(trimmed(newRule).isEmpty)
+            } header: {
+                Text("My rules")
+            } footer: {
+                Text("Plain instructions followed on every check. For example: Spell out texting shorthand. Never use exclamation marks. Use British spelling.")
+            }
+
+            Section {
                 Text(status)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("My words")
+        .navigationTitle("My words and rules")
         .navigationBarTitleDisplayMode(.inline)
         .disabled(!loaded)
         .task { await load() }
@@ -90,6 +109,14 @@ struct DictionaryView: View {
         saved.replace.append(.init(typed: typed, wanted: wanted))
         newTyped = ""
         newWanted = ""
+        save()
+    }
+
+    private func addRule() {
+        let rule = trimmed(newRule)
+        guard !rule.isEmpty else { return }
+        if !saved.rules.contains(rule) { saved.rules.append(rule) }
+        newRule = ""
         save()
     }
 

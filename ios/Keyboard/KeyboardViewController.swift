@@ -17,11 +17,16 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
         /// A short label for each change, such as "Spelling", in the same order as `diff.changes`.
         let reasons: [String]
         var accepted: Set<Int>
+        /// Set for a tone rewrite: the whole new text, shown as one piece to take or leave.
+        var rewrite: String? = nil
+        var toneName: String? = nil
     }
+
+    private static let tones = ["Professional", "Friendly", "Direct", "Shorter"]
 
     /// The last fix, kept on disk so Undo still works after switching keyboards and back.
     private static let appliedKey = "lastApplied"
-    private static let idleHeight: CGFloat = 170
+    private static let idleHeight: CGFloat = 216
     private static let reviewHeight: CGFloat = 330
 
     private let mainButton = UIButton(type: .system)
@@ -30,6 +35,7 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
     private let statusLabel = UILabel()
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let tableView = UITableView(frame: .zero, style: .plain)
+    private let toneRow = UIStackView()
     private var heightConstraint: NSLayoutConstraint?
     private var lastApplied: Applied?
     private var review: Review?
@@ -104,12 +110,33 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
         buttonHeight.priority = .defaultHigh
         buttonHeight.isActive = true
 
+        toneRow.axis = .horizontal
+        toneRow.spacing = 8
+        toneRow.distribution = .fillEqually
+        for (index, tone) in Self.tones.enumerated() {
+            var config = UIButton.Configuration.gray()
+            config.title = tone
+            config.cornerStyle = .large
+            config.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 2, bottom: 4, trailing: 2)
+            config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attrs in
+                var attrs = attrs
+                attrs.font = .systemFont(ofSize: 13, weight: .medium)
+                return attrs
+            }
+            let button = UIButton(configuration: config)
+            button.tag = index
+            button.titleLabel?.adjustsFontSizeToFitWidth = true
+            button.addTarget(self, action: #selector(toneTapped(_:)), for: .touchUpInside)
+            toneRow.addArrangedSubview(button)
+        }
+        toneRow.heightAnchor.constraint(equalToConstant: 36).isActive = true
+
         let statusRow = UIStackView(arrangedSubviews: [spinner, statusLabel])
         statusRow.axis = .horizontal
         statusRow.spacing = 8
         statusRow.alignment = .center
 
-        let column = UIStackView(arrangedSubviews: [statusRow, tableView, buttons])
+        let column = UIStackView(arrangedSubviews: [statusRow, tableView, toneRow, buttons])
         column.axis = .vertical
         column.spacing = 10
         column.translatesAutoresizingMaskIntoConstraints = false
@@ -130,6 +157,8 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
 
     private func setBusy(_ busy: Bool) {
         mainButton.isEnabled = !busy
+        toneRow.isUserInteractionEnabled = !busy
+        toneRow.alpha = busy ? 0.5 : 1
         if busy { spinner.startAnimating() } else { spinner.stopAnimating() }
     }
 
@@ -148,7 +177,11 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
         undo.cornerStyle = .large
         undo.imagePadding = 6
 
-        if let review {
+        if let review, review.rewrite != nil {
+            main.title = "Use this"
+            undo.title = "Cancel"
+            undoButton.isEnabled = true
+        } else if let review {
             let total = review.diff.changes.count
             let chosen = review.accepted.count
             if chosen == total {
@@ -174,6 +207,7 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
     private func showReview(_ newReview: Review?) {
         review = newReview
         tableView.isHidden = newReview == nil
+        toneRow.isHidden = newReview != nil
         heightConstraint?.constant = newReview == nil ? Self.idleHeight : Self.reviewHeight
         tableView.reloadData()
         refreshButtons()
@@ -196,7 +230,11 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
         }
     }
 
-    private func startCheck() {
+    @objc private func toneTapped(_ sender: UIButton) {
+        startCheck(tone: Self.tones[sender.tag])
+    }
+
+    private func startCheck(tone: String? = nil) {
         guard hasFullAccess else {
             setStatus("Turn on Allow Full Access for iOSAIBoard in Settings.")
             return
@@ -210,12 +248,18 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
         }
 
         setBusy(true)
-        setStatus("Checking \(source.split(whereSeparator: \.isWhitespace).count) words...")
+        setStatus(tone.map { "Rewriting, \($0.lowercased())..." }
+                  ?? "Checking \(source.split(whereSeparator: \.isWhitespace).count) words...")
         task = Task { [weak self] in
             do {
-                let result = try await FixClient.check(source)
+                let result = try await FixClient.check(source, tone: tone?.lowercased())
                 guard let self, !Task.isCancelled else { return }
-                self.present(original: source, result: result, usingSelection: usingSelection)
+                if let tone {
+                    self.presentRewrite(original: source, rewrite: result.fixed, tone: tone,
+                                        usingSelection: usingSelection)
+                } else {
+                    self.present(original: source, result: result, usingSelection: usingSelection)
+                }
             } catch {
                 guard let self, !Task.isCancelled else { return }
                 self.setStatus((error as? LocalizedError)?.errorDescription ?? "Could not reach the server.")
@@ -241,10 +285,18 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
                           accepted: Set(diff.changes.indices)))
     }
 
+    /// Shows a tone rewrite as one piece to take or leave. Nothing in the text is touched yet.
+    private func presentRewrite(original: String, rewrite: String, tone: String, usingSelection: Bool) {
+        setStatus("\(tone) version below. Tap Use this, or Cancel to keep yours.")
+        showReview(Review(original: original, usingSelection: usingSelection,
+                          diff: TextDiff(original: original, fixed: original), reasons: [],
+                          accepted: [], rewrite: rewrite, toneName: tone))
+    }
+
     private func applyReview() {
         guard let review else { return }
         showReview(nil)
-        guard !review.accepted.isEmpty else {
+        guard review.rewrite != nil || !review.accepted.isEmpty else {
             setStatus("Left as it was.")
             return
         }
@@ -255,7 +307,7 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
             setStatus("The text changed since the check. Tap Check again.")
             return
         }
-        let result = review.diff.result(accepting: review.accepted)
+        let result = review.rewrite ?? review.diff.result(accepting: review.accepted)
         if review.usingSelection {
             proxy.insertText(result)
         } else {
@@ -308,12 +360,25 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
     // MARK: - Change list
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        review?.diff.changes.count ?? 0
+        guard let review else { return 0 }
+        return review.rewrite == nil ? review.diff.changes.count : 1
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "change", for: indexPath)
         guard let review else { return cell }
+        if let rewrite = review.rewrite {
+            var content = cell.defaultContentConfiguration()
+            content.text = rewrite
+            content.textProperties.numberOfLines = 0
+            content.secondaryText = review.toneName.map { "\($0) rewrite" }
+            content.secondaryTextProperties.color = .secondaryLabel
+            cell.contentConfiguration = content
+            cell.accessoryType = .none
+            cell.backgroundColor = .secondarySystemBackground
+            cell.selectionStyle = .none
+            return cell
+        }
         let change = review.diff.changes[indexPath.row]
         let accepted = review.accepted.contains(indexPath.row)
 
@@ -330,7 +395,7 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        guard var current = review else { return }
+        guard var current = review, current.rewrite == nil else { return }
         if current.accepted.contains(indexPath.row) {
             current.accepted.remove(indexPath.row)
         } else {

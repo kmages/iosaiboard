@@ -20,6 +20,7 @@ struct SavedDictionary: Codable, Equatable {
     }
     var keep: [String] = []
     var replace: [Replacement] = []
+    var rules: [String] = []
 }
 
 /// One of the person's own saved corrections that the server applied.
@@ -79,7 +80,8 @@ enum FixClient {
 
     /// Like `fix`, and also reports which saved corrections were applied.
     /// Leading and trailing whitespace never leaves the phone and is put back untouched.
-    static func check(_ text: String) async throws -> FixResult {
+    /// With a `tone` ("professional", "friendly", "direct", "shorter") it rewrites instead of proofreading.
+    static func check(_ text: String, tone: String? = nil) async throws -> FixResult {
         let core = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !core.isEmpty, let range = text.range(of: core) else {
             return FixResult(fixed: text, saved: [])
@@ -89,7 +91,9 @@ enum FixClient {
 
         var request = URLRequest(url: Config.endpoint)
         request.httpMethod = "POST"
-        request.httpBody = try JSONEncoder().encode(["text": core])
+        var body = ["text": core]
+        if let tone { body["tone"] = tone }
+        request.httpBody = try JSONEncoder().encode(body)
         let data = try await send(request)
         guard let reply = try? JSONDecoder().decode(Reply.self, from: data), let fixed = reply.fixed else {
             throw FixError.badResponse

@@ -42,7 +42,7 @@ struct SetupView: View {
                     NavigationLink {
                         DictionaryView()
                     } label: {
-                        Label("My words and corrections", systemImage: "character.book.closed")
+                        Label("My words, corrections and rules", systemImage: "character.book.closed")
                     }
                 }
                 Section("Try it here") {
