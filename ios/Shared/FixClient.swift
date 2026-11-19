@@ -22,9 +22,21 @@ struct SavedDictionary: Codable, Equatable {
     var replace: [Replacement] = []
 }
 
+/// One of the person's own saved corrections that the server applied.
+struct SavedSwap: Decodable {
+    let from: String
+    let to: String
+}
+
+struct FixResult {
+    let fixed: String
+    let saved: [SavedSwap]
+}
+
 enum FixClient {
     private struct Reply: Decodable {
         let fixed: String?
+        let saved: [SavedSwap]?
         let detail: String?
     }
 
@@ -61,10 +73,17 @@ enum FixClient {
     }
 
     /// Sends text to the proxy and returns it corrected.
-    /// Leading and trailing whitespace never leaves the phone and is put back untouched.
     static func fix(_ text: String) async throws -> String {
+        try await check(text).fixed
+    }
+
+    /// Like `fix`, and also reports which saved corrections were applied.
+    /// Leading and trailing whitespace never leaves the phone and is put back untouched.
+    static func check(_ text: String) async throws -> FixResult {
         let core = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !core.isEmpty, let range = text.range(of: core) else { return text }
+        guard !core.isEmpty, let range = text.range(of: core) else {
+            return FixResult(fixed: text, saved: [])
+        }
         let lead = text[text.startIndex..<range.lowerBound]
         let trail = text[range.upperBound...]
 
@@ -72,9 +91,10 @@ enum FixClient {
         request.httpMethod = "POST"
         request.httpBody = try JSONEncoder().encode(["text": core])
         let data = try await send(request)
-        guard let fixed = try? JSONDecoder().decode(Reply.self, from: data).fixed else {
+        guard let reply = try? JSONDecoder().decode(Reply.self, from: data), let fixed = reply.fixed else {
             throw FixError.badResponse
         }
-        return String(lead) + fixed.trimmingCharacters(in: .whitespacesAndNewlines) + String(trail)
+        let whole = String(lead) + fixed.trimmingCharacters(in: .whitespacesAndNewlines) + String(trail)
+        return FixResult(fixed: whole, saved: reply.saved ?? [])
     }
 }

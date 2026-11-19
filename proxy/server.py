@@ -89,16 +89,22 @@ def dictionary_block(d: Dictionary) -> str:
     return "<dictionary>\n" + "\n".join(f"- {w}" for w in d.keep) + "\n</dictionary>\n"
 
 
-def apply_replacements(text: str, d: Dictionary) -> str:
+def apply_replacements(text: str, d: Dictionary) -> tuple[str, list[dict]]:
     """Swap the person's saved shorthand for what they want, whole words only.
 
     Done here in code so it is exact every time; Claude then tidies grammar
     and capitalization around the result.
     """
+    made: list[dict] = []
     for r in sorted(d.replace, key=lambda r: len(r.typed), reverse=True):
         pattern = r"(?<!\w)" + re.escape(r.typed) + r"(?!\w)"
-        text = re.sub(pattern, lambda _m, w=r.wanted: w, text, flags=re.IGNORECASE)
-    return text
+
+        def swap(match: re.Match, wanted: str = r.wanted) -> str:
+            made.append({"from": match.group(0), "to": wanted})
+            return wanted
+
+        text = re.sub(pattern, swap, text, flags=re.IGNORECASE)
+    return text, made
 
 
 def check_token(authorization: str | None) -> None:
@@ -146,7 +152,7 @@ async def fix(body: FixRequest, authorization: str | None = Header(default=None)
         raise HTTPException(502, "Server has no Claude key yet")
 
     saved = load_dictionary()
-    text = apply_replacements(text, saved)
+    text, swaps = apply_replacements(text, saved)
     started = time.monotonic()
     try:
         resp = await client.messages.create(
@@ -189,4 +195,5 @@ async def fix(body: FixRequest, authorization: str | None = Header(default=None)
 
     log.info("fix in=%d out=%d changed=%s ms=%d", len(text), len(fixed),
              fixed != body.text, (time.monotonic() - started) * 1000)
-    return {"fixed": fixed}
+    # "saved" lists the person's own corrections that fired, so the keyboard can label them.
+    return {"fixed": fixed, "saved": swaps}

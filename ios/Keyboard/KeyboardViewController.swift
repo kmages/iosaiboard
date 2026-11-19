@@ -14,6 +14,8 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
         let original: String
         let usingSelection: Bool
         let diff: TextDiff
+        /// A short label for each change, such as "Spelling", in the same order as `diff.changes`.
+        let reasons: [String]
         var accepted: Set<Int>
     }
 
@@ -211,9 +213,9 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
         setStatus("Checking \(source.split(whereSeparator: \.isWhitespace).count) words...")
         task = Task { [weak self] in
             do {
-                let fixed = try await FixClient.fix(source)
+                let result = try await FixClient.check(source)
                 guard let self, !Task.isCancelled else { return }
-                self.present(original: source, fixed: fixed, usingSelection: usingSelection)
+                self.present(original: source, result: result, usingSelection: usingSelection)
             } catch {
                 guard let self, !Task.isCancelled else { return }
                 self.setStatus((error as? LocalizedError)?.errorDescription ?? "Could not reach the server.")
@@ -223,7 +225,8 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
     }
 
     /// Shows the changes for review. Nothing in the text is touched yet.
-    private func present(original: String, fixed: String, usingSelection: Bool) {
+    private func present(original: String, result: FixResult, usingSelection: Bool) {
+        let fixed = result.fixed
         let diff = TextDiff(original: original, fixed: fixed)
         guard fixed != original, !diff.changes.isEmpty else {
             setStatus("Looks good. Nothing to fix.")
@@ -234,6 +237,7 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
         setStatus(count == 1 ? "1 change. Tap it to skip it, or tap Fix all."
                              : "\(count) changes. Tap any you want to skip, then Fix all.")
         showReview(Review(original: original, usingSelection: usingSelection, diff: diff,
+                          reasons: diff.changes.map { Self.reason(for: $0, saved: result.saved) },
                           accepted: Set(diff.changes.indices)))
     }
 
@@ -316,6 +320,8 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
         var content = cell.defaultContentConfiguration()
         content.attributedText = Self.describe(change, accepted: accepted)
         content.textProperties.numberOfLines = 2
+        content.secondaryText = review.reasons[indexPath.row]
+        content.secondaryTextProperties.color = accepted ? .secondaryLabel : .tertiaryLabel
         cell.contentConfiguration = content
         cell.accessoryType = accepted ? .checkmark : .none
         cell.backgroundColor = .secondarySystemBackground
@@ -333,6 +339,43 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
         review = current
         tableView.reloadRows(at: [indexPath], with: .none)
         refreshButtons()
+    }
+
+    /// Names the kind of mistake, worked out on the phone so it costs no extra wait.
+    private static func reason(for change: TextChange, saved: [SavedSwap]) -> String {
+        let old = change.old.trimmingCharacters(in: .whitespacesAndNewlines)
+        let new = change.new.trimmingCharacters(in: .whitespacesAndNewlines)
+        if old.isEmpty && new.isEmpty { return "Spacing" }
+        if saved.contains(where: {
+            old.range(of: $0.from, options: .caseInsensitive) != nil
+                && new.range(of: $0.to, options: .caseInsensitive) != nil
+        }) {
+            return "Your saved correction"
+        }
+
+        let lettersOnly: (String) -> String = { text in
+            String(text.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) })
+        }
+        let oldLetters = lettersOnly(old), newLetters = lettersOnly(new)
+        if old.isEmpty { return newLetters.isEmpty ? "Missing punctuation" : "Missing word" }
+        if new.isEmpty { return oldLetters.isEmpty ? "Extra punctuation" : "Extra word" }
+        if old.lowercased() == new.lowercased() { return "Capitalization" }
+
+        if oldLetters.lowercased() == newLetters.lowercased() {
+            let apostrophes: (String) -> Int = { text in text.filter { $0 == "'" || $0 == "\u{2019}" }.count }
+            if apostrophes(old) != apostrophes(new) { return "Apostrophe" }
+            if old.contains(" ") != new.contains(" ") { return "Spelling" }
+            return oldLetters == newLetters ? "Punctuation" : "Capitalization and punctuation"
+        }
+
+        let checker = UITextChecker()
+        let misspelled = old.split(separator: " ").contains { word in
+            let text = String(word)
+            let range = NSRange(location: 0, length: (text as NSString).length)
+            return checker.rangeOfMisspelledWord(in: text, range: range, startingAt: 0,
+                                                 wrap: false, language: "en_US").location != NSNotFound
+        }
+        return misspelled ? "Spelling" : "Grammar"
     }
 
     /// "their → they're", with the old text struck through. Skipped changes are greyed out.
