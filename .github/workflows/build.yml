@@ -1,0 +1,25 @@
+name: Compile check
+on:
+  push:
+    branches: [main]
+    paths: ["ios/**", ".github/workflows/build.yml"]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate project
+        working-directory: ios
+        run: |
+          brew install xcodegen
+          cp Shared/Config.example.swift Shared/Config.swift
+          xcodegen
+      - name: Compile for the simulator (no signing)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild -project iOSAIBoard.xcodeproj -target iOSAIBoard \
+            -sdk iphonesimulator -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO build | tee build.log | grep -E "error:|warning: unre|BUILD (SUCCEEDED|FAILED)" || (tail -40 build.log; exit 1)
