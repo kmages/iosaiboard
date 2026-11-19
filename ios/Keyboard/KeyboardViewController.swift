@@ -36,6 +36,9 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let toneRow = UIStackView()
+    /// True when shown inside the iOSAIBoard app's own text box instead of as a system keyboard.
+    var isEmbedded = false
+    private var canUseNetwork: Bool { hasFullAccess || isEmbedded }
     private var heightConstraint: NSLayoutConstraint?
     private var lastApplied: Applied?
     private var review: Review?
@@ -49,13 +52,13 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
             lastApplied = applied
         }
         refreshButtons()
-        setStatus(hasFullAccess ? "Put the cursor at the end of your text, then tap Check."
+        setStatus(canUseNetwork ? "Put the cursor at the end of your text, then tap Check."
                                 : "Turn on Allow Full Access for iOSAIBoard in Settings.")
     }
 
     override func viewWillLayoutSubviews() {
         super.viewWillLayoutSubviews()
-        globeButton.isHidden = !needsInputModeSwitchKey
+        globeButton.isHidden = isEmbedded || !needsInputModeSwitchKey
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -235,7 +238,7 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
     }
 
     private func startCheck(tone: String? = nil) {
-        guard hasFullAccess else {
+        guard canUseNetwork else {
             setStatus("Turn on Allow Full Access for iOSAIBoard in Settings.")
             return
         }
@@ -320,6 +323,7 @@ final class KeyboardViewController: UIInputViewController, UITableViewDataSource
 
     /// Returns to the keyboard you were typing on, after a beat so the result is visible.
     private func switchBackSoon() {
+        guard !isEmbedded else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             self?.advanceToNextInputMode()
         }

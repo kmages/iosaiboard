@@ -19,6 +19,8 @@ targets:
       - App
       - path: Shared
         excludes: ["Config.example.swift"]
+      # The panel is also shown inside the app's "Try it here" box.
+      - Keyboard/KeyboardViewController.swift
     info:
       path: App/Info.plist
       properties:

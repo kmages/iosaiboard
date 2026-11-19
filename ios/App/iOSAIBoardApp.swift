@@ -10,6 +10,7 @@ struct iOSAIBoardApp: App {
 }
 
 struct SetupView: View {
+    @State private var tryWithBoard = true
     @State private var sample = "i think their going to be late, definately by a hour or more"
 
     var body: some View {
@@ -46,8 +47,16 @@ struct SetupView: View {
                     }
                 }
                 Section("Try it here") {
-                    TextEditor(text: $sample)
+                    Picker("Keyboard", selection: $tryWithBoard) {
+                        Text("Check it").tag(true)
+                        Text("Edit the text").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    TryItField(text: $sample, useBoard: tryWithBoard)
                         .frame(minHeight: 140)
+                    Text("Tap the text and iOSAIBoard comes up. Switch to Edit the text to type with your usual keyboard.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
                 Section {
                     Text("Your text is sent only when you tap Fix, and it is not stored.")
