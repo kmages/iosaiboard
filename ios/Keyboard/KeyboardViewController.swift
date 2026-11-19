@@ -3,9 +3,19 @@ import UIKit
 /// A keyboard with no letter keys: type with your usual keyboard, switch here, tap Fix.
 /// Fixes the selected text if there is a selection, otherwise the text before the cursor.
 final class KeyboardViewController: UIInputViewController {
-    private struct Applied {
+    private struct Applied: Codable {
         let original: String
         let fixed: String
+    }
+
+    /// The last fix, kept on disk so Undo still works after switching keyboards and back.
+    private static let appliedKey = "lastApplied"
+
+    private func remember(_ applied: Applied?) {
+        lastApplied = applied
+        undoButton.isEnabled = applied != nil
+        let data = applied.flatMap { try? JSONEncoder().encode($0) }
+        UserDefaults.standard.set(data, forKey: Self.appliedKey)
     }
 
     private let fixButton = UIButton(type: .system)
@@ -19,6 +29,11 @@ final class KeyboardViewController: UIInputViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         buildUI()
+        if let data = UserDefaults.standard.data(forKey: Self.appliedKey),
+           let applied = try? JSONDecoder().decode(Applied.self, from: data) {
+            lastApplied = applied
+            undoButton.isEnabled = true
+        }
         setStatus(hasFullAccess ? "Put the cursor at the end of your text, then tap Fix."
                                 : "Turn on Allow Full Access for iOSAIBoard in Settings.")
     }
@@ -154,6 +169,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         guard fixed != original else {
             setStatus("Looks good. Nothing to fix.")
+            switchBackSoon()
             return
         }
 
@@ -162,9 +178,16 @@ final class KeyboardViewController: UIInputViewController {
         } else {
             replaceTail(of: original, with: fixed)
         }
-        lastApplied = Applied(original: original, fixed: fixed)
-        undoButton.isEnabled = true
-        setStatus("Fixed. Tap Undo to put it back.")
+        remember(Applied(original: original, fixed: fixed))
+        setStatus("Fixed. Come back here to undo.")
+        switchBackSoon()
+    }
+
+    /// Returns to the keyboard you were typing on, after a beat so the result is visible.
+    private func switchBackSoon() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            self?.advanceToNextInputMode()
+        }
     }
 
     @objc private func undoTapped() {
@@ -174,13 +197,11 @@ final class KeyboardViewController: UIInputViewController {
         let overlap = min(before.count, applied.fixed.count)
         guard overlap > 0, before.suffix(overlap) == applied.fixed.suffix(overlap) else {
             setStatus("Can't undo: the text has changed since the fix.")
-            lastApplied = nil
-            undoButton.isEnabled = false
+            remember(nil)
             return
         }
         replaceTail(of: applied.fixed, with: applied.original)
-        lastApplied = nil
-        undoButton.isEnabled = false
+        remember(nil)
         setStatus("Put back the way it was.")
     }
 
